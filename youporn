@@ -1,0 +1,152 @@
+#!/bin/bash
+# by Dominik Stanisław Suchora <suchora.dominik7@gmail.com>
+# License: GNU GPLv3
+
+ucurl() {
+    curl -L -g -s --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) QtWebEngine/5.15.2 Chrome/87.0.4280.144 Safari/537.36' -H 'Accept-Encoding: gzip, deflate' --compressed -H 'Cookie: local_storage=1; age_verified=1' "$@"
+}
+
+declare threads='4' dir='.' cookie_t
+declare -r arg0="$(basename "$0")"
+
+usage() {
+    printf '%s [OPTION...] [DIR]\n' "$(basename "$0")"
+    printf "Archive youporn videos, channels, pornstars metadata in json from its sitemap.\n"
+    printf "Type of page depends on [-pvc] options.\n"
+    printf "Pages will be saved in files named by their sha256 hash of urls and placed in DIR.\n\n"
+    printf "Options:\n"
+    printf "  -t NUM\tset number of used threads, by default set to 4\n"
+    printf "  -p\t\tpornstars\n"
+    printf "  -v\t\tvideos\n"
+    printf "  -c\t\tchannels\n"
+    printf "  -h\t\tshow help\n"
+}
+
+get_v_json() {
+    local -r url="$1"
+    local -r t="$(ucurl -c "$cookie_t" "$1" | tr -d '\n\r\t')"
+    local _tmp1 _tmp2 _tmp3 id
+    {
+    id="${1##*watch/}"
+    id="${id%%/*}"
+    echo "$id" #id
+    echo "$1" #link
+    echo "$(hgrep 'meta +property="og:title" +content @p"%(content)a\n"' <<< "$t")" #title
+    echo "$(hgrep 'div .watch-metadata; .* .tm_rating_percent @p"%i\n"' <<< "$t")" #likes_ratio
+    echo "$(hgrep 'div .action-section @m">Views</span>"; span .infoValue @p"%i\n"' <<< "$t")" #views
+    echo "$(hgrep 'div #metaDataPornstarInfo; a +href @M"<img" @p"%(href)a\t"' <<< "$t")" #pornstars_links
+    echo "$(hgrep 'div #metaDataPornstarInfo; a +href @M"<img"; .* @M"<" @p"%i\t"' <<< "$t")" #pornstars
+    echo "$(hgrep 'div +id=showMoreUnderplayerInfoBox; div +class="video-featured"; span @p"%i\n"' <<< "$t")" #featured
+    echo "$(hgrep 'div +id=showMoreUnderplayerInfoBox; div +class="video-uploaded"; span @p"%i\n"' <<< "$t")" #uploaded
+    echo "$(hgrep 'div .video-uploaderInfoPanel; a @M"<img" +href @p"%(href)a\n"' <<< "$t" | head -n1)" #channel_link
+    echo "$(hgrep 'div .video-uploaderInfoPanel; a @M"<img" +href @p"%i\n"' <<< "$t" | head -n1)" #channel
+    echo "$(hgrep 'div .jump-to-action-carousel; .* +data-seconds @p"%(data-seconds)a;%i\n"' <<< "$t" | sed 's/ <var .*//' | paste -sd '\t')" #actions
+    echo "$(hgrep 'meta property="og:image" +content @p"%(content)a\n"' <<< "$t")" #thumbnail
+    echo "$(hgrep 'meta +property=og:video:width +content @p"%(content)ax", meta +property=og:video:height +content @p"%(content)a\n"' <<< "$t")" #resolution
+    echo "$(hgrep 'meta +property=video:duration +content @p"%(content)a\n"' <<< "$t")" #duration
+    echo "$(hgrep 'div .videoTags; a .button +href="/category/.*" @p"%i\t"' <<< "$t")" #categories
+    echo "$(hgrep 'div .videoTags; a .button +href="/porntags/.*" @p"%i\t"' <<< "$t")" #tags
+    } | jq -RnMc '
+        .["id"]=input |
+        .["link"]=input |
+        .["title"]=input |
+        .["likes_ratio"]=input |
+        .["views"]=input |
+        .["pornstar_links"]=(input | split("\t"))[:-1] |
+        .["pornstars"]=(input | split("\t"))[:-1] |
+        .["featured"]=input |
+        .["uploaded"]=input |
+        .["channel_link"]=input |
+        .["channel"]=input |
+        .["actions"]=(input | split("\t") | map(split(";") | {
+            ("moment"):.[0],
+            ("name"):.[1]
+        })) |
+        .["thumbnail"]=input |
+        .["resolution"]=input |
+        .["duration"]=input |
+        .["categories"]=(input | split("\t"))[:-1] |
+        .["tags"]=(input | split("\t"))[:-1]'
+}
+
+get_p_json() {
+    local -r t="$(ucurl "$1" | tr -d '\n\t\r\a')"
+    {
+    echo "$1" #link
+    echo "$(hgrep 'h1 .porn-star-name @p"%i\n"' <<< "$t")" #name
+    echo "$(hgrep 'div .pornstar-image-wrapper; img +data-src @p"%(data-src)a\n"' <<< "$t")" #image
+    echo "$(hgrep 'div +class=porn-star-stats; span @M"[A-Z]" @p"%i\n"' <<< "$t" | sed 's/^ *//;s/ *$//;s/,//g')" #rank videos views
+    echo "$(hgrep -E 'div +class=porn-star-info-bottom; (span|label) @p"%i\n"' <<< "$t" | sed 'N;s/ *\n *//;s/^ \+//;s/ \+$//' | paste -sd '\t')" #info_pieces
+    echo "$(hgrep 'div +class=subscribers-count; span +class=count @p"%i\n"' <<< "$t")" #subscribers
+    echo "$(hgrep 'div +class="js_related_pornstars carousel-wrapper"; a +title @p"%(title)a\t"' <<< "$t")" #related_pornstars
+    echo "$(hgrep 'div +class="js_related_channels carousel-wrapper"; span .channelTitle @p"%i\t"' <<< "$t")" #related_channels
+    echo "$(hgrep 'div .related-searches; a +href @p"%i\t"' <<< "$t")" #related_searches
+    } | jq -RnMc '
+        .["link"]=input |
+        .["name"]=input |
+        .["image"]=input |
+        .["rank"]=input |
+        .["videos"]=input |
+        .["views"]=input |
+        .["info_pieces"]=(input | split("\t") | map(split(":") | {
+            ("key"):.[0],
+            ("value"):.[1]
+        })) |
+        .["subscribers"]=input |
+        .["related_pornstars"]=((input | split("\t"))[:-1]) |
+        .["related_channels"]=((input | split("\t"))[:-1]) |
+        .["related_searches"]=((input | split("\t"))[:-1])'
+}
+
+get_c_json() {
+    local -r t="$(ucurl "$1" | tr -d '\n\t\r\a')"
+    local _tmp1
+    {
+    echo "$1" #link
+    echo "$(hgrep 'h1 .title-text @p"%i\n"' <<< "$t" | sed 's/ *<.*//')" #name
+    echo "$(hgrep 'div .channel-contentWrapper; div +class="\(info-metrics\|rank\)" @p"%i\n"' <<< "$t" | tr -d ',')" #rank videos views subscribers
+    echo "$(hgrep 'div .channel-description; p @p"%i\n"' <<< "$t")" #description
+    } | jq -RnMc '
+        .["link"]=input |
+        .["name"]=input |
+        .["rank"]=input |
+        .["videos"]=input |
+        .["views"]=input |
+        .["subscribers"]=input |
+        .["description"]=input'
+}
+
+[ "$#" -eq '0' ] && { usage >&2; exit 1; }
+
+while [ "$#" -gt 0 ]
+do
+    case "$1" in
+        -t) threads="$2"; shift;;
+        -p) pattern='pornstars'; func='get_p_json';;
+        -v) pattern='video'; func='get_v_json';;
+        -c) pattern='channels'; func='get_c_json';;
+        -h) usage; exit 0;;
+        -*) printf '%s: invalid argument -- %s\n' "$(basename "$0")" "$1" >&2; exit 1;;
+        *) dir="$1";;
+    esac
+    shift
+done
+
+[ -z "$pattern" ] && { printf '%s: No option specified the type of pages\n' "$(basename "$0")" >&2; exit 1; }
+cd "$dir" || exit 1
+
+cookie_t="$(mktemp)"
+trap 'rm "$cookie_t"; exit' EXIT
+
+for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | hgrep 'loc @m"/sitemap-'"$pattern"'.*\.xml" @p"%i\n"')
+do
+    for j in $(ucurl "$i" | hgrep 'loc @p"%i\n"')
+    do
+        [ "$(jobs | wc -l)" -gt "$threads" ] && wait %%
+        rh="$(sha256sum <<< "$j")"
+        rn="${rh%  *}"
+        [ -e "$rn" ] && continue
+        echo "$j"
+        "$func" "$j" > "$rn" &
+    done
+done
