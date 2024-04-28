@@ -31,21 +31,23 @@ get_v_json() {
     id="${id%%/*}"
     echo "$id" #id
     echo "$1" #link
-    echo "$(hgrep 'meta +property="og:title" +content | "%(content)a\n"' <<< "$t")" #title
-    echo "$(hgrep 'div .watch-metadata; .* .tm_rating_percent | "%i\n"' <<< "$t")" #likes_ratio
-    echo "$(hgrep 'div .action-section @m">Views</span>"; span .infoValue | "%i\n"' <<< "$t")" #views
-    echo "$(hgrep 'div #metaDataPornstarInfo; a +href @M"<img" | "%(href)a\t"' <<< "$t")" #pornstars_links
-    echo "$(hgrep 'div #metaDataPornstarInfo; a +href @M"<img"; .* @M"<" | "%i\t"' <<< "$t")" #pornstars
-    echo "$(hgrep 'div +id=showMoreUnderplayerInfoBox; div +class="video-featured"; span | "%i\n"' <<< "$t")" #featured
-    echo "$(hgrep 'div +id=showMoreUnderplayerInfoBox; div +class="video-uploaded"; span | "%i\n"' <<< "$t")" #uploaded
-    echo "$(hgrep 'div .video-uploaderInfoPanel; a @M"<img" +href | "%(href)a\n"' <<< "$t" | head -n1)" #channel_link
-    echo "$(hgrep 'div .video-uploaderInfoPanel; a @M"<img" +href | "%i\n"' <<< "$t" | head -n1)" #channel
-    echo "$(hgrep 'div .jump-to-action-carousel; .* +data-seconds | "%(data-seconds)a;%i\n"' <<< "$t" | sed 's/ <var .*//' | paste -sd '\t')" #actions
-    echo "$(hgrep 'meta property="og:image" +content | "%(content)a\n"' <<< "$t")" #thumbnail
-    echo "$(hgrep 'meta +property=og:video:width +content | "%(content)ax", meta +property=og:video:height +content | "%(content)a\n"' <<< "$t")" #resolution
-    echo "$(hgrep 'meta +property=video:duration +content | "%(content)a\n"' <<< "$t")" #duration
-    echo "$(hgrep 'div .videoTags; a .button +href="/category/.*" | "%i\t"' <<< "$t")" #categories
-    echo "$(hgrep 'div .videoTags; a .button +href="/porntags/.*" | "%i\t"' <<< "$t")" #tags
+    reliq '
+        . meta +property="og:title" +content | "%(content)v\n",
+        . div .watch-metadata; * .tm_rating_percent | "%i\n",
+        . div .action-section m@">Views</span>"; span .infoValue | "%i\n",
+        . div #metaDataPornstarInfo; a href m@v>"<img" | "%(href)v\t" / echo "" "\n",
+        . div #metaDataPornstarInfo; a href m@v>"<img"; * c@[0] | "%i\t" / echo "" "\n",
+        . div #showMoreUnderplayerInfoBox; div .video-featured; span | "%i\n",
+        . div #showMoreUnderplayerInfoBox; div .video-uploaded; span | "%i\n",
+        . div .video-uploaderInfoPanel; a m@v>"<img" href | "%(href)v\n" / line [1],
+        . div .video-uploaderInfoPanel; a m@v>"<img" href | "%i\n" / line [1],
+        . div .jump-to-action-carousel; * data-seconds | "%(data-seconds)v;%i\t" / tr "\n" sed "s/<[^>]*>[^<]*<[^>]*>//g;s/ \t/\t/g" echo "" "\n",
+        . meta property="og:image" content | "%(content)v\n",
+        . meta property=og:video:width content | "%(content)vx", meta property=og:video:height content | "%(content)v\n",
+        . meta property=video:duration content | "%(content)v\n",
+        . div .videoTags; a .button href=b>"/category/" | "%i\t" / echo "" "\n",
+        . div .videoTags; a .button href=b>"/porntags/" | "%i\t" / echo "" "\n"
+    ' <<< "$t"
     } | jq -RnMc '
         .["id"]=input |
         .["link"]=input |
@@ -58,7 +60,7 @@ get_v_json() {
         .["uploaded"]=input |
         .["channel_link"]=input |
         .["channel"]=input |
-        .["actions"]=(input | split("\t") | map(split(";") | {
+        .["actions"]=((input | split("\t"))[:-1] | map(split(";") | {
             ("moment"):.[0],
             ("name"):.[1]
         })) |
@@ -73,14 +75,16 @@ get_p_json() {
     local -r t="$(ucurl "$1" | tr -d '\n\t\r\a')"
     {
     echo "$1" #link
-    echo "$(hgrep 'h1 .porn-star-name | "%i\n"' <<< "$t")" #name
-    echo "$(hgrep 'div .pornstar-image-wrapper; img +data-src | "%(data-src)a\n"' <<< "$t")" #image
-    echo "$(hgrep 'div +class=porn-star-stats; span @M"[A-Z]" | "%i\n"' <<< "$t" | sed 's/^ *//;s/ *$//;s/,//g')" #rank videos views
-    echo "$(hgrep -E 'div +class=porn-star-info-bottom; (span|label) | "%i\n"' <<< "$t" | sed 'N;s/ *\n *//;s/^ \+//;s/ \+$//' | paste -sd '\t')" #info_pieces
-    echo "$(hgrep 'div +class=subscribers-count; span +class=count | "%i\n"' <<< "$t")" #subscribers
-    echo "$(hgrep 'div +class="js_related_pornstars carousel-wrapper"; a +title | "%(title)a\t"' <<< "$t")" #related_pornstars
-    echo "$(hgrep 'div +class="js_related_channels carousel-wrapper"; span .channelTitle | "%i\t"' <<< "$t")" #related_channels
-    echo "$(hgrep 'div .related-searches; a +href | "%i\t"' <<< "$t")" #related_searches
+    reliq '
+        . h1 .porn-star-name | "%i\n",
+        . div .pornstar-image-wrapper; img data-src | "%(data-src)v\n",
+        . div .porn-star-stats; span m@vB>"[A-Z]" | "%i\n" / sed "s/^ *//;s/ *$//;s/,//g",
+        . div .porn-star-info-bottom; E>(span|label) | "%i\n" / sed ":x; N;s/\n//; $!{N;s/\n/\t/;bx}",
+        . div .subscribers-count; span .count | "%i\n",
+        . div .js_related_pornstars .carousel-wrapper; a title | "%(title)v\t" / echo "" "\n",
+        . div .js_related_channels .carousel-wrapper; span .channelTitle | "%i\t" / echo "" "\n",
+        . div .related-searches; a href | "%i\t" / echo "" "\n"
+    ' <<< "$t"
     } | jq -RnMc '
         .["link"]=input |
         .["name"]=input |
@@ -103,17 +107,19 @@ get_c_json() {
     local _tmp1
     {
     echo "$1" #link
-    echo "$(hgrep 'h1 .title-text | "%i\n"' <<< "$t" | sed 's/ *<.*//')" #name
-    echo "$(hgrep 'div .channel-contentWrapper; div +class="\(info-metrics\|rank\)" | "%i\n"' <<< "$t" | tr -d ',')" #rank videos views subscribers
-    echo "$(hgrep 'div .channel-description; p | "%i\n"' <<< "$t")" #description
+    reliq '
+        . h1 .title-text | "%i\n" / sed "s/ *<.*//",
+        . div .channel-description; p | "%i\n",
+        div .channel-contentWrapper; div class=E>"(info-metrics|rank)" | "%i\n" / tr ","
+    ' <<< "$t"
     } | jq -RnMc '
         .["link"]=input |
         .["name"]=input |
+        .["description"]=input |
         .["rank"]=input |
         .["videos"]=input |
         .["views"]=input |
-        .["subscribers"]=input |
-        .["description"]=input'
+        .["subscribers"]=input'
 }
 
 [ "$#" -eq '0' ] && { usage >&2; exit 1; }
@@ -138,9 +144,9 @@ cd "$dir" || exit 1
 cookie_t="$(mktemp)"
 trap 'rm "$cookie_t"; exit' EXIT
 
-for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | hgrep 'loc @m"/sitemap-'"$pattern"'.*\.xml" | "%i\n"')
+for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | reliq 'loc m@B>"/sitemap-'"$pattern"'.*\.xml" | "%i\n"')
 do
-    for j in $(ucurl "$i" | hgrep 'loc | "%i\n"')
+    for j in $(ucurl "$i" | reliq 'loc | "%i\n"')
     do
         [ "$(jobs | wc -l)" -gt "$threads" ] && wait %%
         rh="$(sha256sum <<< "$j")"
