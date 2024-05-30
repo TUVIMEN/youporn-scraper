@@ -6,131 +6,127 @@ ucurl() {
     curl -L -g -s --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) QtWebEngine/5.15.2 Chrome/87.0.4280.144 Safari/537.36' -H 'Accept-Encoding: gzip, deflate' --compressed -H 'Cookie: local_storage=1; age_verified=1' "$@"
 }
 
-declare threads='4' dir='.' cookie_t
-declare -r arg0="$(basename "$0")"
+declare threads='4' cookie_t
 
 usage() {
-    printf '%s [OPTION...] [DIR]\n' "$(basename "$0")"
-    printf "Archive youporn videos, channels, pornstars metadata in json from its sitemap.\n"
-    printf "Type of page depends on [-pvc] options.\n"
-    printf "Pages will be saved in files named by their sha256 hash of urls and placed in DIR.\n\n"
-    printf "Options:\n"
-    printf "  -t NUM\tset number of used threads, by default set to 4\n"
-    printf "  -p\t\tpornstars\n"
-    printf "  -v\t\tvideos\n"
-    printf "  -c\t\tchannels\n"
-    printf "  -h\t\tshow help\n"
+    printf '%s [OPTION...] [URL]...\n' "$(basename "$0")"
+    printf 'Archive youporn videos, channels, pornstars metadata in json from its sitemap.\n'
+    printf 'Download functions are matched to URL.\n'
+    printf 'Data will be saved in files named by sha256 hash of their urls.\n\n'
+    printf 'Options:\n  -d,\t--dir DIR\t\tchange directory to DIR\n'
+    printf '  -t,\t--threads NUM\t\tset number of used threads, by default set to 4\n'
+    printf '  -p,\t--pornstar URL\t\tpass URL as pornstar\n'
+    printf '  -P,\t--pornstars\t\tdownload all pornstars from sitemap\n'
+    printf '  -v,\t--video URL\t\tpass URL as video\n'
+    printf '  -V,\t--videos\t\tdownload all videos from sitemap\n'
+    printf '  -c,\t--channel URL\t\tpass URL as channel\n'
+    printf '  -C,\t--channels\t\tdownload all channels from sitemap\n'
+    printf '  -h,\t--help\t\t\tshow help\n'
 }
 
-get_v_json() {
-    local -r url="$1"
-    local -r t="$(ucurl -c "$cookie_t" "$1" | tr -d '\n\r\t')"
-    local _tmp1 _tmp2 _tmp3 id
-    {
+get_video() {
+    local -r rh="$(sha256sum <<< "$1")"
+    local -r name="${rh%  *}"
+    [ -e "$name" ] && return
+    echo "$1" >&2
     id="${1##*watch/}"
     id="${id%%/*}"
-    echo "$id" #id
-    echo "$1" #link
-    reliq '
-        . meta +property="og:title" +content | "%(content)v\n",
-        . div .watch-metadata; * .tm_rating_percent | "%i\n",
-        . div .action-section m@">Views</span>"; span .infoValue | "%i\n",
-        . div #metaDataPornstarInfo; a href m@v>"<img" | "%(href)v\t" / echo "" "\n",
-        . div #metaDataPornstarInfo; a href m@v>"<img"; * c@[0] | "%i\t" / echo "" "\n",
-        . div #showMoreUnderplayerInfoBox; div .video-featured; span | "%i\n",
-        . div #showMoreUnderplayerInfoBox; div .video-uploaded; span | "%i\n",
-        . div .video-uploaderInfoPanel; a m@v>"<img" href | "%(href)v\n" / line [1],
-        . div .video-uploaderInfoPanel; a m@v>"<img" href | "%i\n" / line [1],
-        . div .jump-to-action-carousel; * data-seconds | "%(data-seconds)v;%i\t" / tr "\n" sed "s/<[^>]*>[^<]*<[^>]*>//g;s/ \t/\t/g" echo "" "\n",
-        . meta property="og:image" content | "%(content)v\n",
-        . meta property=og:video:width content | "%(content)vx", meta property=og:video:height content | "%(content)v\n",
-        . meta property=video:duration content | "%(content)v\n",
-        . div .videoTags; a .button href=b>"/category/" | "%i\t" / echo "" "\n",
-        . div .videoTags; a .button href=b>"/porntags/" | "%i\t" / echo "" "\n"
-    ' <<< "$t"
-    } | jq -RnMc '
-        .["id"]=input |
-        .["link"]=input |
-        .["title"]=input |
-        .["likes_ratio"]=input |
-        .["views"]=input |
-        .["pornstar_links"]=(input | split("\t"))[:-1] |
-        .["pornstars"]=(input | split("\t"))[:-1] |
-        .["featured"]=input |
-        .["uploaded"]=input |
-        .["channel_link"]=input |
-        .["channel"]=input |
-        .["actions"]=((input | split("\t"))[:-1] | map(split(";") | {
-            ("moment"):.[0],
-            ("name"):.[1]
-        })) |
-        .["thumbnail"]=input |
-        .["resolution"]=input |
-        .["duration"]=input |
-        .["categories"]=(input | split("\t"))[:-1] |
-        .["tags"]=(input | split("\t"))[:-1]'
+    ucurl -c "$cookie_t" "$1" | tr -d '\n\r\t' | reliq '
+        .title meta +property="og:title" content | "%(content)v",
+        .likes_ratio div .watch-metadata; * .tm_rating_percent | "%i",
+        .views.u div .action-section m@">Views</span>"; span .infoValue | "%i",
+        .pornstars div #metaDataPornstarInfo; a href m@v>"<img"; {
+            .link * l@[0] | "https://www.youporn.com%(href)v",
+            .name * c@[0] | "%i",
+        } | ,
+        div #showMoreUnderplayerInfoBox; {
+            .featured div .video-featured; span | "%i",
+            .uploaded div .video-uploaded; span | "%i"
+        },
+        div .video-uploaderInfoPanel; [0] a m@v>"<img" href; {
+            .channel_link * l@[0] | "https://www.youporn.com%(href)v",
+            .channel * l@[0] | "%i"
+        },
+        .actions div .jump-to-action-carousel; * data-seconds; {
+            .moment * l@[0] | "%(data-seconds)v",
+            .name * l@[0] | "%t" sed "s/ $//"
+        } | ,
+        .thumbnail meta property="og:image" content | "%(content)v",
+        .duration.u meta property=video:duration content | "%(content)v",
+        .categories.a div .videoTags; a .button href=b>"/category/" | "%i\n",
+        .tags.a div .videoTags; a .button href=b>"/porntags/" | "%i\n"
+    ' | jq -srcM --arg 'link' "$1" --arg 'id' "$id" '{"id":$id,"link":$link}+.[0]' > "$name"
 }
 
-get_p_json() {
-    local -r t="$(ucurl "$1" | tr -d '\n\t\r\a')"
-    {
-    echo "$1" #link
-    reliq '
-        . h1 .porn-star-name | "%i\n",
-        . div .pornstar-image-wrapper; img data-src | "%(data-src)v\n",
-        . div .porn-star-stats; span m@vB>"[A-Z]" | "%i\n" / sed "s/^ *//;s/ *$//;s/,//g",
-        . div .porn-star-info-bottom; E>(span|label) | "%i\n" / sed ":x; N;s/\n//; $!{N;s/\n/\t/;bx}",
-        . div .subscribers-count; span .count | "%i\n",
-        . div .js_related_pornstars .carousel-wrapper; a title | "%(title)v\t" / echo "" "\n",
-        . div .js_related_channels .carousel-wrapper; span .channelTitle | "%i\t" / echo "" "\n",
-        . div .related-searches; a href | "%i\t" / echo "" "\n"
-    ' <<< "$t"
-    } | jq -RnMc '
-        .["link"]=input |
-        .["name"]=input |
-        .["image"]=input |
-        .["rank"]=input |
-        .["videos"]=input |
-        .["views"]=input |
-        .["info_pieces"]=(input | split("\t") | map(split(":") | {
-            ("key"):.[0],
-            ("value"):.[1]
-        })) |
-        .["subscribers"]=input |
-        .["related_pornstars"]=((input | split("\t"))[:-1]) |
-        .["related_channels"]=((input | split("\t"))[:-1]) |
-        .["related_searches"]=((input | split("\t"))[:-1])'
+get_pornstar() {
+    local -r rh="$(sha256sum <<< "$1")"
+    local -r name="${rh%  *}"
+    [ -e "$name" ] && return
+    echo "$1" >&2
+    ucurl "$1" | tr -d '\n\t\r\a' | reliq '
+        .name h1 .porn-star-name | "%i",
+        .image div .pornstar-image-wrapper; img data-src | "%(data-src)v",
+        div .porn-star-stats; span m@vB>"[A-Z]"; {
+            .rank.u [0] * l@[0] | tr ",",
+            .videos.u [1] * l@[0] | tr ",",
+            .views.u [2] * l@[0] | tr ",",
+        },
+        .info_pieces div .porn-star-info-bottom; li; {
+            .key label | "%i",
+            .value span | "%i"
+        } | ,
+        .subscribers.u div .subscribers-count; span .count | "%i",
+        .related_porstars.a div .js_related_pornstars .carousel-wrapper; a title | "%(title)v\n",
+        .related_channels.a div .js_related_channels .carousel-wrapper; span .channelTitle | "%i\n",
+        .related_searches.a div .related-searches; a href | "%i\n"
+    ' | jq -srcM --arg 'link' "$1" '{"link":$link}+.[0]' > "$name"
 }
 
-get_c_json() {
-    local -r t="$(ucurl "$1" | tr -d '\n\t\r\a')"
-    local _tmp1
-    {
-    echo "$1" #link
-    reliq '
-        . h1 .title-text | "%i\n" / sed "s/ *<.*//",
-        . div .channel-description; p | "%i\n",
-        div .channel-contentWrapper; div class=E>"(info-metrics|rank)" | "%i\n" / tr ","
-    ' <<< "$t"
-    } | jq -RnMc '
-        .["link"]=input |
-        .["name"]=input |
-        .["description"]=input |
-        .["rank"]=input |
-        .["videos"]=input |
-        .["views"]=input |
-        .["subscribers"]=input'
+get_channel() {
+    local -r rh="$(sha256sum <<< "$1")"
+    local -r name="${rh%  *}"
+    [ -e "$name" ] && return
+    echo "$1" >&2
+    ucurl "$1" | tr -d '\n\t\r\a' | reliq '
+        .name h1 .title-text | "%i" / sed "s/ *<.*//",
+        .description div .channel-description; p | "%i",
+        div .channel-contentWrapper; {
+            .rank.u [0] div .rank | "%i\n" tr ",",
+            .videos.u [0] div .info-metrics | "%i\n" tr ",",
+            .views.u [1] div .info-metrics | "%i\n" tr ",",
+            .subscribers.u [2] div .info-metrics | "%i\n" tr ",",
+        }
+    ' | jq -srcM --arg 'link' "$1" '{"link":$link}+.[0]' > "$name"
+}
+
+get_from_sitemap() {
+    for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | reliq 'loc m@B>"/sitemap-'"$1"'.*\.xml" | "%i\n"')
+    do
+        for j in $(ucurl "$i" | reliq 'loc | "%i\n"')
+        do
+            [ "$(jobs | wc -l)" -gt "$threads" ] && wait %%
+            "$2" "$j" &
+        done
+        wait
+    done
 }
 
 [ "$#" -eq '0' ] && { usage >&2; exit 1; }
 
+cookie_t="$(mktemp)"
+trap 'rm "$cookie_t"; exit'  HUP INT QUIT TERM PWR EXIT
+
 while [ "$#" -gt 0 ]
 do
     case "$1" in
+        -d|--dir) cd "$2" || exit; shift;;
         -t) threads="$2"; shift;;
-        -p) pattern='pornstars'; func='get_p_json';;
-        -v) pattern='video'; func='get_v_json';;
-        -c) pattern='channels'; func='get_c_json';;
+        -p) get_pornstar "$2"; shift;;
+        -P) get_from_sitemap 'pornstars' 'get_pornstar';;
+        -v) get_video "$2"; shift;;
+        -V) get_from_sitemap 'video' 'get_video';;
+        -c) get_channel "$2"; shift;;
+        -C) get_from_sitemap 'channels' 'get_channel';;
         -h) usage; exit 0;;
         -*) printf '%s: invalid argument -- %s\n' "$(basename "$0")" "$1" >&2; exit 1;;
         *) dir="$1";;
@@ -138,21 +134,17 @@ do
     shift
 done
 
-[ -z "$pattern" ] && { printf '%s: No option specified the type of pages\n' "$(basename "$0")" >&2; exit 1; }
-cd "$dir" || exit 1
-
-cookie_t="$(mktemp)"
-trap 'rm "$cookie_t"; exit' EXIT
-
-for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | reliq 'loc m@B>"/sitemap-'"$pattern"'.*\.xml" | "%i\n"')
+while [ "$#" -gt 0 ]
 do
-    for j in $(ucurl "$i" | reliq 'loc | "%i\n"')
-    do
-        [ "$(jobs | wc -l)" -gt "$threads" ] && wait %%
-        rh="$(sha256sum <<< "$j")"
-        rn="${rh%  *}"
-        [ -e "$rn" ] && continue
-        echo "$j"
-        "$func" "$j" > "$rn" &
-    done
+    case "$1" in
+        https://www.youporn.com/watch/*)
+            get_video "$1";;
+        https://www.youporn.com/pornstar/*)
+            get_pornstar "$1";;
+        https://www.youporn.com/channel/*)
+            get_channel "$1";;
+        *)
+            printf 'unexpected url "%s"\n' "$1";;
+    esac
+    shift
 done
