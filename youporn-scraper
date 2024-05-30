@@ -120,14 +120,14 @@ while [ "$#" -gt 0 ]
 do
     case "$1" in
         -d|--dir) cd "$2" || exit; shift;;
-        -t) threads="$2"; shift;;
-        -p) get_pornstar "$2"; shift;;
-        -P) get_from_sitemap 'pornstars' 'get_pornstar';;
-        -v) get_video "$2"; shift;;
-        -V) get_from_sitemap 'video' 'get_video';;
-        -c) get_channel "$2"; shift;;
-        -C) get_from_sitemap 'channels' 'get_channel';;
-        -h) usage; exit 0;;
+        -t|--threads) threads="$2"; shift;;
+        -p|--pornstar) get_pornstar "$2"; shift;;
+        -P|--pornstars) get_from_sitemap 'pornstars' 'get_pornstar';;
+        -v|--video) get_video "$2"; shift;;
+        -V|--videos) get_from_sitemap 'video' 'get_video';;
+        -c|--channel) get_channel "$2"; shift;;
+        -C|--channels) get_from_sitemap 'channels' 'get_channel';;
+        -h|--help) usage; exit 0;;
         -*) printf '%s: invalid argument -- %s\n' "$(basename "$0")" "$1" >&2; exit 1;;
         *) dir="$1";;
     esac
