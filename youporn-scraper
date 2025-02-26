@@ -10,7 +10,7 @@ declare threads='4' cookie_t
 
 usage() {
     printf '%s [OPTION...] [URL]...\n' "$(basename "$0")"
-    printf 'Archive youporn videos, channels, pornstars metadata in json from its sitemap.\n'
+    printf 'Archive youporn videos, channels, pornstars metadata in json from its sitemap and urls.\n'
     printf 'Download functions are matched to URL.\n'
     printf 'Data will be saved in files named by sha256 hash of their urls.\n\n'
     printf 'Options:\n  -d,\t--dir DIR\t\tchange directory to DIR\n'
@@ -34,8 +34,8 @@ get_video() {
     ucurl -c "$cookie_t" "$1" | tr -d '\n\r\t' | reliq '
         .title meta +property="og:title" content | "%(content)v",
         .likes_ratio div .watch-metadata; * .tm_rating_percent | "%i",
-        .views.u div .action-section m@">Views</span>"; span .infoValue | "%i",
-        .pornstars div #metaDataPornstarInfo; a href m@v>"<img"; {
+        .views.u div .action-section i@">Views</span>"; span .infoValue | "%i",
+        .pornstars div #metaDataPornstarInfo; a href i@v>"<img"; {
             .link * l@[0] | "https://www.youporn.com%(href)v",
             .name * c@[0] | "%i",
         } | ,
@@ -43,7 +43,7 @@ get_video() {
             .featured div .video-featured; span | "%i",
             .uploaded div .video-uploaded; span | "%i"
         },
-        div .video-uploaderInfoPanel; [0] a m@v>"<img" href; {
+        div .video-uploaderInfoPanel; [0] a i@v>"<img" href; {
             .channel_link * l@[0] | "https://www.youporn.com%(href)v",
             .channel * l@[0] | "%i"
         },
@@ -66,7 +66,7 @@ get_pornstar() {
     ucurl "$1" | tr -d '\n\t\r\a' | reliq '
         .name h1 .porn-star-name | "%i",
         .image div .pornstar-image-wrapper; img data-src | "%(data-src)v",
-        div .porn-star-stats; span m@vB>"[A-Z]"; {
+        div .porn-star-stats; span i@vB>"[A-Z]"; {
             .rank.u [0] * l@[0] | tr ",",
             .videos.u [1] * l@[0] | tr ",",
             .views.u [2] * l@[0] | tr ",",
@@ -100,7 +100,7 @@ get_channel() {
 }
 
 get_from_sitemap() {
-    for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | reliq 'loc m@B>"/sitemap-'"$1"'.*\.xml" | "%i\n"')
+    for i in $(ucurl 'https://www.youporn.com/sitemap.xml' | reliq 'loc i@B>"/sitemap-'"$1"'.*\.xml" | "%i\n"')
     do
         for j in $(ucurl "$i" | reliq 'loc | "%i\n"')
         do
@@ -144,7 +144,7 @@ do
         https://www.youporn.com/channel/*)
             get_channel "$1";;
         *)
-            printf 'unexpected url "%s"\n' "$1";;
+            printf 'unsupported url "%s"\n' "$1";;
     esac
     shift
 done
